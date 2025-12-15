@@ -25,7 +25,7 @@ class ShelfDataset(Dataset):
         """Extrait et normalise les features des boxes"""
         features = []
         
-        for key in ['left_before', 'right_before', 'left_after', 'right_after']:
+        for key in ['before', 'after']:
             boxes = data.get(key, [])
             
             # Normaliser les coordonnées (supposer image 640x480)
@@ -52,7 +52,7 @@ class ShelfDetectionNet(nn.Module):
     def __init__(self, num_shelves: int = 4, max_boxes: int = 20):
         super(ShelfDetectionNet, self).__init__()
         
-        input_size = 4 * (max_boxes * 4 + 1)
+        input_size = 2 * (max_boxes * 4 + 1)
         
         # Encoder principal
         self.encoder = nn.Sequential(
@@ -269,9 +269,8 @@ def generate_realistic_data(n_samples: int = 500) -> Tuple[List, List]:
         modified_shelf = np.random.randint(0, 4)
         n_removed = np.random.randint(1, min(4, items_per_shelf[modified_shelf]))
         
-        # Générer boxes AVANT
-        left_before = []
-        right_before = []
+        # Générer boxes AVANT (combinant left et right)
+        before = []
         
         for shelf_idx, (y_pos, n_items) in enumerate(zip(shelf_positions, items_per_shelf)):
             for j in range(n_items):
@@ -279,42 +278,28 @@ def generate_realistic_data(n_samples: int = 500) -> Tuple[List, List]:
                 box_h = 40 + np.random.randint(-5, 5)
                 box_w = 50 + np.random.randint(-5, 5)
                 
-                left_before.append([x, y_pos, box_h, box_w])
-                right_before.append([x + 320, y_pos, box_h, box_w])
+                before.append([x, y_pos, box_h, box_w])
         
         # Générer boxes APRÈS (retirer exactement n_removed de la rangée modifiée)
-        left_after = []
-        right_after = []
+        after = []
         removed_count = 0
         
-        for box in left_before:
+        for box in before:
             y = box[1]
             shelf_idx = min(range(4), key=lambda i: abs(y - shelf_positions[i]))
             
             if shelf_idx == modified_shelf and removed_count < n_removed:
                 removed_count += 1
                 continue
-            left_after.append(box)
-        
-        removed_count = 0
-        for box in right_before:
-            y = box[1]
-            shelf_idx = min(range(4), key=lambda i: abs(y - shelf_positions[i]))
-            
-            if shelf_idx == modified_shelf and removed_count < n_removed:
-                removed_count += 1
-                continue
-            right_after.append(box)
+            after.append(box)
         
         # Label
         label = ['0'] * 4
         label[modified_shelf] = str(-n_removed)
         
         sample = ({
-            'left_before': left_before,
-            'right_before': right_before,
-            'left_after': left_after,
-            'right_after': right_after
+            'before': before,
+            'after': after
         }, '|'.join(label))
         
         # Split train/val 80/20
@@ -345,10 +330,8 @@ if __name__ == "__main__":
     
     print("\n=== Test de prédiction ===")
     test_input = {
-        'left_before': [[80, 50, 40, 50], [150, 50, 40, 50], [220, 50, 40, 50]],
-        'right_before': [[400, 50, 40, 50], [470, 50, 40, 50], [540, 50, 40, 50]],
-        'left_after': [[80, 50, 40, 50], [220, 50, 40, 50]],
-        'right_after': [[400, 50, 40, 50], [540, 50, 40, 50]]
+        'before': [[80, 50, 40, 50], [150, 50, 40, 50], [220, 50, 40, 50]],
+        'after': [[80, 50, 40, 50], [220, 50, 40, 50]]
     }
     
     prediction = detector.predict(test_input)
