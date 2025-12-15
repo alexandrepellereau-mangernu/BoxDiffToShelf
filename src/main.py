@@ -353,6 +353,6 @@ if __name__ == "__main__":
     
     prediction = detector.predict(test_input)
     print(f"Prédiction: {prediction}")
-    print("Attendu: -2|0|0|0 (2 objets retirés de la rangée 0)")
+    print("Attendu: -1|0|0|0")
     
-    detector.save('shelf_detector.pth')
+    detector.save('models/shelf_detector.pth')
