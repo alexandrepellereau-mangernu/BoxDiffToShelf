@@ -84,33 +84,54 @@ class COCOReader:
             Liste de dictionnaires contenant les informations des boîtes
         """
         if image_filename:
-            # Extract filename from URL if necessary
-            if image_filename.startswith('http://') or image_filename.startswith('https://'):
-                image_filename = image_filename.split('/')[-1]
-            
-            # Extract camera identifier (e.g., camera-AR, camera-BL)
-            # from filename like "camera-AR.jpg"
+            # Extract operation ID and camera from URL
+            # URL format: .../Operations/{operation_id}/PicturesAfter/raw/camera-XX.jpg
+            operation_id = None
             camera_id = None
-            if 'camera-' in image_filename:
-                # Extract camera-XX part
-                start_idx = image_filename.find('camera-')
-                end_idx = start_idx + len('camera-') + 2  # camera- + 2 chars
-                camera_id = image_filename[start_idx:end_idx]
             
-            # Trouver l'ID à partir du nom de fichier
-            # Match by exact filename or by camera identifier
+            if image_filename.startswith('http://') or image_filename.startswith('https://'):
+                # Extract operation ID from URL path
+                parts = image_filename.split('/')
+                for i, part in enumerate(parts):
+                    if part == 'Operations' and i + 1 < len(parts):
+                        operation_id = parts[i + 1]
+                    
+                # Extract camera from filename
+                filename = parts[-1]
+                if 'camera-' in filename:
+                    start_idx = filename.find('camera-')
+                    end_idx = start_idx + len('camera-') + 2
+                    camera_id = filename[start_idx:end_idx]
+            else:
+                # Direct filename
+                if 'camera-' in image_filename:
+                    start_idx = image_filename.find('camera-')
+                    end_idx = start_idx + len('camera-') + 2
+                    camera_id = image_filename[start_idx:end_idx]
+            
+            # Try to find matching image in COCO
+            # Format in COCO: ope_{operation_id}_camera-{XX}_jpg.rf.{hash}.jpg
             for img_id, img_data in self.images_dict.items():
                 file_name = img_data['file_name']
+                
+                # Exact filename match
                 if file_name == image_filename:
                     image_id = img_id
                     break
-                # Try matching by camera identifier if we have one
-                if camera_id and camera_id in file_name:
+                
+                # Match by operation ID + camera
+                if operation_id and camera_id:
+                    if f"ope_{operation_id}_" in file_name and camera_id in file_name:
+                        image_id = img_id
+                        break
+                
+                # Fallback: match by camera only (old behavior)
+                elif camera_id and camera_id in file_name:
                     image_id = img_id
                     break
             
             if image_id is None:
-                raise ValueError(f"Image '{image_filename}' non trouvée")
+                raise ValueError(f"Image '{image_filename}' non trouvée (operation: {operation_id}, camera: {camera_id})")
         
         boxes = []
         for ann in self.annotations:
