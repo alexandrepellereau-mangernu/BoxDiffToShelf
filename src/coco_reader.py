@@ -84,11 +84,31 @@ class COCOReader:
             Liste de dictionnaires contenant les informations des boîtes
         """
         if image_filename:
+            # Extract filename from URL if necessary
+            if image_filename.startswith('http://') or image_filename.startswith('https://'):
+                image_filename = image_filename.split('/')[-1]
+            
+            # Extract camera identifier (e.g., camera-AR, camera-BL)
+            # from filename like "camera-AR.jpg"
+            camera_id = None
+            if 'camera-' in image_filename:
+                # Extract camera-XX part
+                start_idx = image_filename.find('camera-')
+                end_idx = start_idx + len('camera-') + 2  # camera- + 2 chars
+                camera_id = image_filename[start_idx:end_idx]
+            
             # Trouver l'ID à partir du nom de fichier
+            # Match by exact filename or by camera identifier
             for img_id, img_data in self.images_dict.items():
-                if img_data['file_name'] == image_filename:
+                file_name = img_data['file_name']
+                if file_name == image_filename:
                     image_id = img_id
                     break
+                # Try matching by camera identifier if we have one
+                if camera_id and camera_id in file_name:
+                    image_id = img_id
+                    break
+            
             if image_id is None:
                 raise ValueError(f"Image '{image_filename}' non trouvée")
         
@@ -377,7 +397,66 @@ class COCOReader:
             print(f"✓ Données exportées vers {output_path}")
         
         return boxes, labels
+    
+    def prepare_image_pairs(self, csv_file: str, camera=None) -> Tuple[List[Tuple[str, str]], List[str]]:
+        """
+        Prépare des paires d'images avant/après à partir d'un fichier CSV
+        
+        Args:
+            csv_file: Chemin vers le fichier CSV avec colonnes 'before', 'after'
+        
+        Returns:
+            Liste de tuples (before_image_name, after_image_name, result)
+        """
+        import pandas as pd
+        
+        df = pd.read_csv(csv_file)
+        image_pairs = []
+        results = []
+        
+        for _, row in df.iterrows():
+            left_before_name = row['PictureLeftBefore']
+            left_after_name = row['PictureLeftAfter']
+            right_after_name = row['PictureRightAfter']
+            right_before_name = row['PictureRightBefore']
+            if not camera or camera == 'right':
+                image_pairs.append((right_before_name, right_after_name))
+                results.append(row['ShelfReview'])
+            if not camera or camera == 'left':
+                image_pairs.append((left_before_name, left_after_name))
+                results.append(row['ShelfReview'])
+        
+        return image_pairs, results 
 
+    def export_for_training_before_after(self, images_names: List[Tuple[str, str]]):
+        """
+        Exporte les données au format avant/après pour ShelfDetector
+        
+        Args:
+            images_names: Liste de tuples (before_image_name, after_image_name)
+        
+        Returns:
+            boxes
+        """
+        boxes_list = []
+        
+        for before_name, after_name in images_names:
+            before_boxes = self.get_boxes_for_image(image_filename=before_name)
+            after_boxes = self.get_boxes_for_image(image_filename=after_name)
+
+            # Ignorer si aucune boîte dans avant ou après
+            if len(before_boxes) == 0 or len(after_boxes) == 0:
+                continue
+            
+            # Convertir en format numpy
+            before_boxes_array = np.array([box['bbox'] for box in before_boxes])
+            after_boxes_array = np.array([box['bbox'] for box in after_boxes])
+            
+            all_boxes = np.vstack((before_boxes_array, after_boxes_array))
+            boxes_list.append(all_boxes)
+        
+        boxes = np.vstack(boxes_list)
+        return boxes
 
 # Exemple d'utilisation
 if __name__ == "__main__":

@@ -14,20 +14,20 @@ from coco_reader import COCOReader
 from shelf_detector import ShelfDetector
 
 
-def prepare_training_data_from_coco(coco_path: str, 
+def prepare_training_data_from_coco(coco_path: str,
+                                     csv_path: str,
                                      num_shelves: int = 4,
                                      camera: str = None,
-                                     excluded_categories: List[str] = None,
-                                     samples_per_shelf: int = 50) -> List[Tuple[dict, str]]:
+                                     excluded_categories: List[str] = None) -> List[Tuple[dict, str]]:
     """
-    Prepare training data from COCO annotations
+    Prepare training data from COCO annotations using real before/after image pairs
     
     Args:
         coco_path: Path to COCO JSON file
+        csv_path: Path to CSV file with before/after image pairs
         num_shelves: Number of shelves to detect
         camera: Filter by camera ('left', 'right', or None for all)
         excluded_categories: Categories to exclude from training
-        samples_per_shelf: Number of samples to generate per shelf
     
     Returns:
         List of training samples in the format expected by ShelfDetector
@@ -43,80 +43,67 @@ def prepare_training_data_from_coco(coco_path: str,
     print(f"  Annotations per image: {stats['annotations_per_image']:.2f}")
     print(f"  Categories: {list(stats['categories'].keys())}")
     
-    # Export boxes and labels
-    print(f"\n🔄 Exporting training data...")
-    boxes, labels = coco.export_for_training(
-        camera=camera,
-        use_y_position=True,  # Generate labels based on Y position
-        num_shelves=num_shelves,
-        excluded_categories=excluded_categories
-    )
+    # Prepare image pairs from CSV
+    print(f"\n📋 Loading image pairs from CSV: {csv_path}")
+    image_pairs, labels = coco.prepare_image_pairs(csv_path, camera=camera)
+    print(f"  Found {len(image_pairs)} image pairs")
+    
+    # Export boxes using real before/after pairs
+    print(f"\n🔄 Exporting training data from before/after pairs...")
+    boxes = coco.export_for_training_before_after(image_pairs)
     
     print(f"\n✅ Loaded {len(boxes)} boxes with {len(labels)} labels")
     print(f"  Unique shelf labels: {np.unique(labels)}")
     
-    # Convert to ShelfDetector format by generating synthetic before/after pairs
+    # Convert to ShelfDetector format
     training_samples = []
     
-    # Group boxes by shelf
-    boxes_by_shelf = {}
-    for shelf_id in range(num_shelves):
-        boxes_by_shelf[shelf_id] = boxes[labels == shelf_id].tolist()
+    print(f"\n🔧 Creating training samples from real image pairs...")
     
-    print(f"\n🔧 Generating synthetic training samples...")
-    print(f"  Samples per shelf: {samples_per_shelf}")
-    
-    # Generate samples for each shelf
-    for target_shelf in range(num_shelves):
-        shelf_boxes = boxes_by_shelf[target_shelf]
-        if len(shelf_boxes) < 2:
-            print(f"  ⚠️  Shelf {target_shelf}: Not enough boxes ({len(shelf_boxes)}), skipping")
+    for before_name, after_name in image_pairs:
+        # Get boxes for before and after images
+        try:
+            before_boxes = coco.get_boxes_for_image(image_filename=before_name)
+            after_boxes = coco.get_boxes_for_image(image_filename=after_name)
+        except ValueError:
+            # Skip if image not found
             continue
         
-        for _ in range(samples_per_shelf):
-            # Create "before" state with boxes from all shelves
-            before_boxes = []
-            for shelf_id in range(num_shelves):
-                if len(boxes_by_shelf[shelf_id]) > 0:
-                    # Randomly sample some boxes from this shelf
-                    n_boxes = np.random.randint(1, min(8, len(boxes_by_shelf[shelf_id]) + 1))
-                    indices = np.random.choice(len(boxes_by_shelf[shelf_id]), n_boxes, replace=False)
-                    before_boxes.extend([boxes_by_shelf[shelf_id][i] for i in indices])
-            
-            # Create "after" state by removing boxes from target shelf
-            n_remove = np.random.randint(1, min(4, len(shelf_boxes) // 2 + 1))
-            
-            # Count boxes from target shelf in before state
-            target_shelf_count = sum(1 for box in before_boxes 
-                                    if any(np.allclose(box, sb) for sb in shelf_boxes))
-            
-            # Make sure we don't remove more than what's in the before state
-            n_remove = min(n_remove, target_shelf_count)
-            
-            if n_remove == 0:
-                continue
-            
-            # Remove n_remove boxes from target shelf
-            after_boxes = []
-            removed = 0
-            for box in before_boxes:
-                is_target_shelf = any(np.allclose(box, sb) for sb in shelf_boxes)
-                if is_target_shelf and removed < n_remove:
-                    removed += 1
-                    continue
-                after_boxes.append(box)
-            
-            # Create label
-            label = ['0'] * num_shelves
-            label[target_shelf] = str(-n_remove)
-            
-            sample = (
-                {'before': before_boxes, 'after': after_boxes},
-                '|'.join(label)
-            )
-            training_samples.append(sample)
+        # Skip if no boxes in either image
+        if len(before_boxes) == 0 or len(after_boxes) == 0:
+            continue
+        
+        # Convert to numpy arrays
+        before_boxes_array = np.array([box['bbox'] for box in before_boxes])
+        after_boxes_array = np.array([box['bbox'] for box in after_boxes])
+        
+        # Get shelf labels for all boxes
+        all_boxes = np.vstack((before_boxes_array, after_boxes_array))
+        y_centers = all_boxes[:, 1] + all_boxes[:, 3] / 2
+        y_min, y_max = y_centers.min(), y_centers.max()
+        
+        shelf_labels = np.floor((y_centers - y_min) / (y_max - y_min) * num_shelves)
+        shelf_labels = np.clip(shelf_labels, 0, num_shelves - 1).astype(int)
+        
+        before_shelf_labels = shelf_labels[:len(before_boxes_array)]
+        after_shelf_labels = shelf_labels[len(before_boxes_array):]
+        
+        # Calculate changes per shelf
+        changes = ['0'] * num_shelves
+        for shelf_id in range(num_shelves):
+            before_count = np.sum(before_shelf_labels == shelf_id)
+            after_count = np.sum(after_shelf_labels == shelf_id)
+            diff = after_count - before_count
+            changes[shelf_id] = str(diff)
+        
+        # Create sample
+        sample = (
+            {'before': before_boxes_array.tolist(), 'after': after_boxes_array.tolist()},
+            '|'.join(changes)
+        )
+        training_samples.append(sample)
     
-    print(f"  ✅ Generated {len(training_samples)} training samples")
+    print(f"  ✅ Generated {len(training_samples)} training samples from real image pairs")
     
     return training_samples
 
@@ -138,6 +125,7 @@ def main():
     """Main training pipeline"""
     # Configuration
     COCO_PATH = "../data/train/_annotations.coco.json"
+    CSV_PATH = "../data/dataset.csv"
     MODEL_SAVE_PATH = "../models/shelf_detector.pth"
     NUM_SHELVES = 4
     MAX_BOXES = 20
@@ -151,12 +139,17 @@ def main():
     print("🚀 Shelf Detection Training Pipeline")
     print("=" * 60)
     
-    # Get absolute path to COCO file
+    # Get absolute paths
     script_dir = Path(__file__).parent
     coco_path = (script_dir / COCO_PATH).resolve()
+    csv_path = (script_dir / CSV_PATH).resolve()
     
     if not coco_path.exists():
         print(f"❌ Error: COCO file not found at {coco_path}")
+        sys.exit(1)
+    
+    if not csv_path.exists():
+        print(f"❌ Error: CSV file not found at {csv_path}")
         sys.exit(1)
     
     # Prepare training data
@@ -166,6 +159,7 @@ def main():
     
     all_samples = prepare_training_data_from_coco(
         str(coco_path),
+        str(csv_path),
         num_shelves=NUM_SHELVES,
         camera=CAMERA,
         excluded_categories=EXCLUDED_CATEGORIES
