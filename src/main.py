@@ -47,7 +47,6 @@ def prepare_training_data_from_coco(coco_path: str,
     print(f"\n📋 Loading image pairs from CSV: {csv_path}")
     boxes_pairs, labels = coco.export_for_training_before_after(csv_path, camera=camera)
     print(f"\n✅ Loaded {len(boxes_pairs)} boxes pairs with {len(labels)} labels")
-    print(f"  Sample boxes pairs: {boxes_pairs[:3]}")
     print(f"  Unique labels: {np.unique(labels)}")
     
     print(f"  Unique shelf labels: {np.unique(labels)}")
