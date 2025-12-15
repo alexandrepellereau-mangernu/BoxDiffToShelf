@@ -61,12 +61,11 @@ def prepare_training_data_from_coco(coco_path: str,
         before_boxes_array = boxes_pairs[i][0]
         after_boxes_array = boxes_pairs[i][1]
         label = labels[i]
-        print(f"  before boxes: {before_boxes_array}, after boxes: {after_boxes_array}, label: {label}")
 
         # Create sample
         sample = (
             {'before': before_boxes_array.tolist(), 'after': after_boxes_array.tolist()},
-            '|'.join(label)
+            label
         )
         training_samples.append(sample)
     
