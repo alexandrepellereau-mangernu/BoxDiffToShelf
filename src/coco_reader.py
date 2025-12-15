@@ -419,10 +419,13 @@ class COCOReader:
             left_after_name = row['PictureLeftAfter']
             right_after_name = row['PictureRightAfter']
             right_before_name = row['PictureRightBefore']
-            if not camera or camera == 'right':
+            
+            # When camera is None, process both left and right
+            # When camera is specified, only process that camera
+            if camera is None or camera == 'right':
                 image_pairs.append((right_before_name, right_after_name))
                 results.append(row['ShelfReview'])
-            if not camera or camera == 'left':
+            if camera is None or camera == 'left':
                 image_pairs.append((left_before_name, left_after_name))
                 results.append(row['ShelfReview'])
         
@@ -439,21 +442,32 @@ class COCOReader:
             boxes
         """
         boxes = []
+        skipped = 0
+        
+        if self.debug:
+            print(f"🔍 Processing {len(images_names)} image pairs...")
         
         for before_name, after_name in images_names:
-            before_boxes = self.get_boxes_for_image(image_filename=before_name)
-            after_boxes = self.get_boxes_for_image(image_filename=after_name)
-            print("-" * 20)
-            print(f"Len before boxes: {len(before_boxes)}")
-            print(f"Len after boxes: {len(after_boxes)}")
+            try:
+                before_boxes = self.get_boxes_for_image(image_filename=before_name)
+                after_boxes = self.get_boxes_for_image(image_filename=after_name)
 
+                # Ignorer si aucune boîte dans avant ou après
+                if len(before_boxes) == 0 or len(after_boxes) == 0:
+                    skipped += 1
+                    continue
 
-            # Ignorer si aucune boîte dans avant ou après
-            if len(before_boxes) == 0 or len(after_boxes) == 0:
+                boxes.append((np.array([box['bbox'] for box in before_boxes]),
+                              np.array([box['bbox'] for box in after_boxes])))
+            except (ValueError, KeyError) as e:
+                # Image not found in COCO annotations
+                skipped += 1
+                if self.debug:
+                    print(f"  ⚠️  Skipped pair ({before_name}, {after_name}): {e}")
                 continue
-
-            boxes.append((np.array([box['bbox'] for box in before_boxes]),
-                          np.array([box['bbox'] for box in after_boxes])))
+        
+        if self.debug:
+            print(f"  ✅ Kept {len(boxes)} pairs, skipped {skipped} pairs")
         
         return boxes
 

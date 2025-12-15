@@ -49,8 +49,6 @@ def prepare_training_data_from_coco(coco_path: str,
     print(f"\n✅ Loaded {len(boxes_pairs)} boxes pairs with {len(labels)} labels")
     print(f"  Unique labels: {np.unique(labels)}")
     
-    print(f"  Unique shelf labels: {np.unique(labels)}")
-    
     # Convert to ShelfDetector format
     training_samples = []
     
