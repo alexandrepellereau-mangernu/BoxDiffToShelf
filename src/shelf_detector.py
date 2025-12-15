@@ -24,11 +24,11 @@ class ShelfDetector:
               lr: float = 0.001,
               validation_data: List[Tuple[dict, str]] = None):
         """Entraîne le modèle avec validation optionnelle"""
-        dataset = ShelfDataset(train_data, max_boxes=self.max_boxes)
+        dataset = ShelfDataset(train_data, max_boxes=self.max_boxes, num_shelves=self.num_shelves)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
         
         if validation_data:
-            val_dataset = ShelfDataset(validation_data, max_boxes=self.max_boxes)
+            val_dataset = ShelfDataset(validation_data, max_boxes=self.max_boxes, num_shelves=self.num_shelves)
             val_dataloader = DataLoader(val_dataset, batch_size=batch_size)
         
         criterion = nn.MSELoss()
@@ -100,7 +100,7 @@ class ShelfDetector:
         """Prédit la rangée modifiée et le nombre d'objets pris"""
         self.model.eval()
         
-        dataset = ShelfDataset([(input_data, "0|0|0|0")], max_boxes=self.max_boxes)
+        dataset = ShelfDataset([(input_data, "0|0|0|0")], max_boxes=self.max_boxes, num_shelves=self.num_shelves)
         features, _ = dataset[0]
         features = features.unsqueeze(0).to(self.device)
         
@@ -115,7 +115,7 @@ class ShelfDetector:
     
     def evaluate(self, test_data: List[Tuple[dict, str]]) -> Dict:
         """Évalue le modèle sur des données de test"""
-        dataset = ShelfDataset(test_data, max_boxes=self.max_boxes)
+        dataset = ShelfDataset(test_data, max_boxes=self.max_boxes, num_shelves=self.num_shelves)
         dataloader = DataLoader(dataset, batch_size=32)
         
         self.model.eval()
