@@ -45,14 +45,11 @@ def prepare_training_data_from_coco(coco_path: str,
     
     # Prepare image pairs from CSV
     print(f"\n📋 Loading image pairs from CSV: {csv_path}")
-    image_pairs, labels = coco.prepare_image_pairs(csv_path, camera=camera)
-    print(f"  Found {len(image_pairs)} image pairs")
+    boxes_pairs, labels = coco.export_for_training_before_after(csv_path, camera=camera)
+    print(f"\n✅ Loaded {len(boxes_pairs)} boxes pairs with {len(labels)} labels")
+    print(f"  Sample boxes pairs: {boxes_pairs[:3]}")
+    print(f"  Unique labels: {np.unique(labels)}")
     
-    # Export boxes using real before/after pairs
-    print(f"\n🔄 Exporting training data from before/after pairs...")
-    boxes = coco.export_for_training_before_after(image_pairs)
-    
-    print(f"\n✅ Loaded {len(boxes)} boxes with {len(labels)} labels")
     print(f"  Unique shelf labels: {np.unique(labels)}")
     
     # Convert to ShelfDetector format
@@ -60,46 +57,16 @@ def prepare_training_data_from_coco(coco_path: str,
     
     print(f"\n🔧 Creating training samples from real image pairs...")
     
-    for before_name, after_name in image_pairs:
-        # Get boxes for before and after images
-        try:
-            before_boxes = coco.get_boxes_for_image(image_filename=before_name)
-            after_boxes = coco.get_boxes_for_image(image_filename=after_name)
-        except ValueError:
-            # Skip if image not found
-            continue
-        
-        # Skip if no boxes in either image
-        if len(before_boxes) == 0 or len(after_boxes) == 0:
-            continue
-        
-        # Convert to numpy arrays
-        before_boxes_array = np.array([box['bbox'] for box in before_boxes])
-        after_boxes_array = np.array([box['bbox'] for box in after_boxes])
-        
-        # Get shelf labels for all boxes
-        all_boxes = np.vstack((before_boxes_array, after_boxes_array))
-        y_centers = all_boxes[:, 1] + all_boxes[:, 3] / 2
-        y_min, y_max = y_centers.min(), y_centers.max()
-        
-        shelf_labels = np.floor((y_centers - y_min) / (y_max - y_min) * num_shelves)
-        shelf_labels = np.clip(shelf_labels, 0, num_shelves - 1).astype(int)
-        
-        before_shelf_labels = shelf_labels[:len(before_boxes_array)]
-        after_shelf_labels = shelf_labels[len(before_boxes_array):]
-        
-        # Calculate changes per shelf
-        changes = ['0'] * num_shelves
-        for shelf_id in range(num_shelves):
-            before_count = np.sum(before_shelf_labels == shelf_id)
-            after_count = np.sum(after_shelf_labels == shelf_id)
-            diff = after_count - before_count
-            changes[shelf_id] = str(diff)
-        
+    for i in range(len(boxes_pairs)):
+        before_boxes_array = boxes_pairs[i][0]
+        after_boxes_array = boxes_pairs[i][1]
+        label = labels[i]
+        print(f"  before boxes: {before_boxes_array}, after boxes: {after_boxes_array}, label: {label}")
+
         # Create sample
         sample = (
             {'before': before_boxes_array.tolist(), 'after': after_boxes_array.tolist()},
-            '|'.join(changes)
+            '|'.join(label)
         )
         training_samples.append(sample)
     

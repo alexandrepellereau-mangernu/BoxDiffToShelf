@@ -428,7 +428,7 @@ class COCOReader:
         
         return image_pairs, results 
 
-    def export_for_training_before_after(self, images_names: List[Tuple[str, str]]):
+    def images_to_boxes(self, images_names: List[Tuple[str, str]]) -> List[Tuple[np.ndarray, np.ndarray]]:
         """
         Exporte les données au format avant/après pour ShelfDetector
         
@@ -438,7 +438,7 @@ class COCOReader:
         Returns:
             boxes
         """
-        boxes_list = []
+        boxes = []
         
         for before_name, after_name in images_names:
             before_boxes = self.get_boxes_for_image(image_filename=before_name)
@@ -447,77 +447,23 @@ class COCOReader:
             # Ignorer si aucune boîte dans avant ou après
             if len(before_boxes) == 0 or len(after_boxes) == 0:
                 continue
-            
-            # Convertir en format numpy
-            before_boxes_array = np.array([box['bbox'] for box in before_boxes])
-            after_boxes_array = np.array([box['bbox'] for box in after_boxes])
-            
-            all_boxes = np.vstack((before_boxes_array, after_boxes_array))
-            boxes_list.append(all_boxes)
+
+            boxes.append((np.array([box['bbox'] for box in before_boxes]),
+                          np.array([box['bbox'] for box in after_boxes])))
         
-        boxes = np.vstack(boxes_list)
         return boxes
 
-# Exemple d'utilisation
-if __name__ == "__main__":
-    # 1. Charger le fichier COCO
-    coco = COCOReader('annotations.coco.json', debug=True)
-    
-    # 2. Afficher les statistiques générales
-    stats = coco.get_statistics()
-    print("\n📊 Statistiques du dataset complet:")
-    print(f"  Images: {stats['total_images']}")
-    print(f"  Annotations: {stats['total_annotations']}")
-    
-    # 3. Afficher les statistiques par caméra
-    print("\n📊 Statistiques caméra DROITE:")
-    stats_right = coco.get_statistics(camera='right')
-    print(f"  Images: {stats_right['total_images']}")
-    print(f"  Annotations: {stats_right['total_annotations']}")
-    print(f"  Annotations/image: {stats_right['annotations_per_image']:.2f}")
-    
-    print("\n📊 Statistiques caméra GAUCHE:")
-    stats_left = coco.get_statistics(camera='left')
-    print(f"  Images: {stats_left['total_images']}")
-    print(f"  Annotations: {stats_left['total_annotations']}")
-    print(f"  Annotations/image: {stats_left['annotations_per_image']:.2f}")
-    
-    # 4. Exporter uniquement la caméra DROITE
-    print("\n🔄 Export caméra DROITE:")
-    boxes_right, labels_right = coco.export_for_training(
-        output_path='training_data_right.npz',
-        camera='right',
-        use_y_position=True,
-        num_shelves=5
-    )
-    
-    # 5. Exporter uniquement la caméra GAUCHE
-    print("\n🔄 Export caméra GAUCHE:")
-    boxes_left, labels_left = coco.export_for_training(
-        output_path='training_data_left.npz',
-        camera='left',
-        use_y_position=True,
-        num_shelves=5
-    )
-    
-    # 6. Export avec exclusion de catégories
-    print("\n🔄 Export caméra DROITE (avec exclusions):")
-    boxes_right_filtered, labels_right_filtered = coco.export_for_training(
-        output_path='training_data_right_filtered.npz',
-        camera='right',
-        excluded_categories=['black-list', 'test'],
-        use_y_position=True,
-        num_shelves=5
-    )
-    
-    print(f"\n✓ Export terminé!")
-    print(f"  - Caméra droite: {len(boxes_right)} boîtes")
-    print(f"  - Caméra gauche: {len(boxes_left)} boîtes")
-    
-    # 7. Utiliser avec ShelfDetector
-    # from shelf_classifier import ShelfDetector
-    # detector_right = ShelfDetector(num_shelves=5)
-    # detector_right.train(boxes_right, labels_right, epochs=100)
-    # 
-    # detector_left = ShelfDetector(num_shelves=5)
-    # detector_left.train(boxes_left, labels_left, epochs=100)
+    def export_for_training_before_after(self, csv_file: str, camera=None) -> Tuple[np.ndarray, List[str]]:
+        """
+        Exporte les données au format avant/après pour ShelfDetector
+        
+        Args:
+            csv_file: Chemin vers le fichier CSV avec colonnes 'before', 'after'
+            camera: Filtre par caméra - 'left', 'right' ou None (toutes)
+        
+        Returns:
+            boxes
+        """
+        image_pairs, labels = self.prepare_image_pairs(csv_file, camera=camera)
+        boxes = self.images_to_boxes(image_pairs)
+        return boxes, labels
