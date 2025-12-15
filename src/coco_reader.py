@@ -443,6 +443,10 @@ class COCOReader:
         for before_name, after_name in images_names:
             before_boxes = self.get_boxes_for_image(image_filename=before_name)
             after_boxes = self.get_boxes_for_image(image_filename=after_name)
+            print("-" * 20)
+            print(f"Len before boxes: {len(before_boxes)}")
+            print(f"Len after boxes: {len(after_boxes)}")
+
 
             # Ignorer si aucune boîte dans avant ou après
             if len(before_boxes) == 0 or len(after_boxes) == 0:

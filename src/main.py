@@ -192,18 +192,39 @@ def main():
     detector.save(str(model_path))
     print(f"  Model saved to: {model_path}")
     
-    # Test prediction
+    # Test predictions
     if len(val_samples) > 0:
         print("\n" + "=" * 60)
-        print("🔮 Test Prediction")
+        print("🔮 Test Predictions (Sample)")
         print("=" * 60)
         
-        test_sample = val_samples[0]
-        test_input, true_label = test_sample
+        # Show predictions for first 5 validation samples
+        num_samples = min(5, len(val_samples))
+        correct = 0
         
-        prediction = detector.predict(test_input)
-        print(f"  True label: {true_label}")
-        print(f"  Prediction: {prediction}")
+        for i in range(num_samples):
+            test_sample = val_samples[i]
+            test_input, true_label = test_sample
+            
+            prediction = detector.predict(test_input)
+            
+            # Normalize true label to same length as prediction for fair comparison
+            true_values = [int(x) for x in true_label.split('|')][:NUM_SHELVES]
+            pred_values = [int(x) for x in prediction.split('|')]
+            
+            is_correct = true_values == pred_values
+            if is_correct:
+                correct += 1
+            
+            status = "✓" if is_correct else "✗"
+            print(f"\n  Sample {i+1}: {status}")
+            print(f"    True:       {true_values}")
+            print(f"    Predicted:  {pred_values}")
+            if not is_correct:
+                errors = [abs(t - p) for t, p in zip(true_values, pred_values)]
+                print(f"    Error:      {errors}")
+        
+        print(f"\n  Accuracy: {correct}/{num_samples} ({correct/num_samples*100:.1f}%)")
     
     print("\n" + "=" * 60)
     print("✅ Training Complete!")
