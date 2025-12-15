@@ -1,0 +1,444 @@
+import json
+import numpy as np
+from pathlib import Path
+from typing import List, Dict, Tuple, Optional
+
+class COCOReader:
+    """Lecteur de fichiers d'annotations COCO JSON"""
+    
+    def __init__(self, json_path: str, debug: bool = False):
+        """
+        Initialise le lecteur avec un fichier COCO JSON
+        
+        Args:
+            json_path: Chemin vers le fichier .coco.json
+        """
+        self.json_path = Path(json_path)
+        with open(self.json_path, 'r') as f:
+            self.data = json.load(f)
+        
+        # Structures pour accès rapide
+        self.images_dict = {img['id']: img for img in self.data.get('images', [])}
+        self.categories_dict = {cat['id']: cat for cat in self.data.get('categories', [])}
+        self.annotations = self.data.get('annotations', [])
+        self.debug = debug
+        
+        print(f"✅ Chargé: {len(self.images_dict)} images, "
+              f"{len(self.annotations)} annotations, "
+              f"{len(self.categories_dict)} catégories")
+        
+        if debug:
+            print("🛠️ Mode debug activé")
+            print("Aperçu des catégories:")
+            for cat_id, cat_data in self.categories_dict.items():
+                print(f"  - ID {cat_id}: {cat_data['name']}")
+    
+    def _get_camera_from_filename(self, filename: str) -> Optional[str]:
+        """
+        Détermine la caméra (left/right) à partir du nom de fichier
+        
+        Args:
+            filename: Nom du fichier image
+            
+        Returns:
+            'left', 'right' ou None si non déterminable
+        """
+        filename_lower = filename.lower()
+        if '_right_' in filename_lower or 'right_shelf' in filename_lower:
+            return 'right'
+        elif '_left_' in filename_lower or 'left_shelf' in filename_lower:
+            return 'left'
+        return None
+    
+    def get_images_by_camera(self, camera: str) -> List[int]:
+        """
+        Récupère les IDs des images d'une caméra spécifique
+        
+        Args:
+            camera: 'left' ou 'right'
+            
+        Returns:
+            Liste des IDs d'images de cette caméra
+        """
+        assert camera in ['left', 'right'], "Camera doit être 'left' ou 'right'"
+
+        camera = camera.lower()
+        image_ids = []
+        
+        for img_id, img_data in self.images_dict.items():
+            img_camera = self._get_camera_from_filename(img_data['file_name'])
+            if img_camera == camera:
+                image_ids.append(img_id)
+        
+        return image_ids
+    
+    def get_boxes_for_image(self, image_id: int = None, image_filename: str = None) -> List[Dict]:
+        """
+        Récupère toutes les boîtes pour une image spécifique
+        
+        Args:
+            image_id: ID de l'image
+            image_filename: Nom du fichier image (alternatif à image_id)
+            
+        Returns:
+            Liste de dictionnaires contenant les informations des boîtes
+        """
+        if image_filename:
+            # Trouver l'ID à partir du nom de fichier
+            for img_id, img_data in self.images_dict.items():
+                if img_data['file_name'] == image_filename:
+                    image_id = img_id
+                    break
+            if image_id is None:
+                raise ValueError(f"Image '{image_filename}' non trouvée")
+        
+        boxes = []
+        for ann in self.annotations:
+            if ann['image_id'] == image_id:
+                # COCO format: [x, y, width, height]
+                bbox = ann['bbox']
+                
+                box_info = {
+                    'bbox': bbox,  # [x, y, width, height]
+                    'category_id': ann['category_id'],
+                    'category_name': self.categories_dict[ann['category_id']]['name'],
+                    'area': ann.get('area', bbox[2] * bbox[3]),
+                    'annotation_id': ann['id'],
+                    'iscrowd': ann.get('iscrowd', 0)
+                }
+                boxes.append(box_info)
+        
+        return boxes
+    
+    def get_all_boxes_array(self, 
+                           excluded_categories: Optional[List[str]] = None,
+                           camera: Optional[str] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Récupère toutes les boîtes du dataset au format numpy
+        
+        Args:
+            excluded_categories: Liste de noms de catégories à exclure
+            camera: Filtre par caméra - 'left', 'right' ou None (toutes)
+        
+        Returns:
+            Tuple de (boxes, category_ids, image_ids)
+            - boxes: array (n, 4) avec [x, y, width, height]
+            - category_ids: array (n,) avec les IDs de catégorie
+            - image_ids: array (n,) avec les IDs d'image
+        """
+        # Trouver les IDs des catégories à exclure
+        excluded_cat_ids = set()
+        if excluded_categories:
+            for cat_id, cat_data in self.categories_dict.items():
+                if cat_data['name'] in excluded_categories:
+                    excluded_cat_ids.add(cat_id)
+        
+        # Filtrer les images par caméra si nécessaire
+        valid_image_ids = None
+        if camera:
+            valid_image_ids = set(self.get_images_by_camera(camera))
+            if self.debug:
+                print(f"📷 Filtrage caméra {camera}: {len(valid_image_ids)} images")
+        
+        boxes = []
+        category_ids = []
+        image_ids = []
+        
+        for ann in self.annotations:
+            # Ignorer les annotations des catégories exclues
+            if ann['category_id'] in excluded_cat_ids:
+                continue
+            
+            # Ignorer les annotations des images non filtrées par caméra
+            if valid_image_ids is not None and ann['image_id'] not in valid_image_ids:
+                continue
+            
+            boxes.append(ann['bbox'])
+            category_ids.append(ann['category_id'])
+            image_ids.append(ann['image_id'])
+        
+        return (
+            np.array(boxes),
+            np.array(category_ids),
+            np.array(image_ids)
+        )
+    
+    def boxes_to_shelf_format(self, image_id: int = None, 
+                             category_to_shelf: Dict[int, int] = None) -> np.ndarray:
+        """
+        Convertit les boîtes au format attendu par ShelfDetector
+        
+        Args:
+            image_id: ID de l'image (None pour toutes les images)
+            category_to_shelf: Dictionnaire mappant category_id -> shelf_number
+                              Si None, utilise category_id comme shelf_number
+        
+        Returns:
+            array numpy (n, 4) avec [x, y, width, height]
+        """
+        if image_id is not None:
+            boxes = self.get_boxes_for_image(image_id)
+        else:
+            boxes = [{'bbox': ann['bbox'], 'category_id': ann['category_id']} 
+                    for ann in self.annotations]
+        
+        return np.array([box['bbox'] for box in boxes])
+    
+    def get_labels_from_categories(self, 
+                                   category_to_shelf: Dict[int, int] = None,
+                                   excluded_categories: Optional[List[str]] = None,
+                                   camera: Optional[str] = None) -> np.ndarray:
+        """
+        Récupère les labels (numéros d'étagère) à partir des catégories
+        
+        Args:
+            category_to_shelf: Dictionnaire mappant category_id -> shelf_number
+                              Si None, utilise category_id directement
+            excluded_categories: Liste de noms de catégories à exclure
+            camera: Filtre par caméra - 'left', 'right' ou None (toutes)
+        
+        Returns:
+            array numpy (n,) avec les numéros d'étagère
+        """
+        # Trouver les IDs des catégories à exclure
+        excluded_cat_ids = set()
+        if excluded_categories:
+            for cat_id, cat_data in self.categories_dict.items():
+                if cat_data['name'] in excluded_categories:
+                    excluded_cat_ids.add(cat_id)
+        
+        # Filtrer les images par caméra si nécessaire
+        valid_image_ids = None
+        if camera:
+            valid_image_ids = set(self.get_images_by_camera(camera))
+        
+        labels = []
+        for ann in self.annotations:
+            cat_id = ann['category_id']
+            
+            # Ignorer les catégories exclues
+            if cat_id in excluded_cat_ids:
+                continue
+            
+            # Ignorer les images non filtrées par caméra
+            if valid_image_ids is not None and ann['image_id'] not in valid_image_ids:
+                continue
+            
+            if category_to_shelf:
+                shelf = category_to_shelf.get(cat_id, 0)
+            else:
+                shelf = cat_id
+            labels.append(shelf)
+        
+        return np.array(labels)
+    
+    def get_labels_from_y_position(self, 
+                                   num_shelves: int = 5,
+                                   excluded_categories: Optional[List[str]] = None,
+                                   camera: Optional[str] = None) -> np.ndarray:
+        """
+        Génère les labels automatiquement basés sur la position Y des boîtes
+        (utile si vos étagères ne sont pas déjà annotées par catégorie)
+        
+        Args:
+            num_shelves: Nombre d'étagères
+            excluded_categories: Liste de noms de catégories à exclure
+            camera: Filtre par caméra - 'left', 'right' ou None (toutes)
+        
+        Returns:
+            array numpy (n,) avec les numéros d'étagère estimés
+        """
+        boxes, _, _ = self.get_all_boxes_array(
+            excluded_categories=excluded_categories,
+            camera=camera
+        )
+        
+        # Calculer le centre Y de chaque boîte
+        y_centers = boxes[:, 1] + boxes[:, 3] / 2
+        
+        # Trouver les limites Y
+        y_min, y_max = y_centers.min(), y_centers.max()
+        
+        # Diviser en étagères
+        labels = np.floor((y_centers - y_min) / (y_max - y_min) * num_shelves)
+        labels = np.clip(labels, 0, num_shelves - 1).astype(int)
+        
+        return labels
+    
+    def get_all_labels_name(self) -> Dict[int, str]:
+        """
+        Récupère les noms des labels (catégories)
+        """
+        return {k: v['name'] for k, v in self.categories_dict.items()}
+    
+    def filter_by_category(self, category_names: List[str]) -> List[Dict]:
+        """
+        Filtre les annotations par nom de catégorie
+        
+        Args:
+            category_names: Liste de noms de catégories à garder
+        
+        Returns:
+            Liste des annotations filtrées
+        """
+        cat_ids = [cat_id for cat_id, cat_data in self.categories_dict.items() 
+                   if cat_data['name'] in category_names]
+        
+        filtered = [ann for ann in self.annotations if ann['category_id'] in cat_ids]
+        return filtered
+    
+    def get_image_info(self, image_id: int) -> Dict:
+        """Récupère les informations d'une image"""
+        return self.images_dict.get(image_id)
+    
+    def get_statistics(self, camera: Optional[str] = None) -> Dict:
+        """
+        Récupère des statistiques sur le dataset
+        
+        Args:
+            camera: Filtre par caméra - 'left', 'right' ou None (toutes)
+        """
+        boxes, cat_ids, img_ids = self.get_all_boxes_array(camera=camera)
+        
+        # Compter les images selon le filtre caméra
+        if camera:
+            total_images = len(self.get_images_by_camera(camera))
+        else:
+            total_images = len(self.images_dict)
+        
+        stats = {
+            'total_images': total_images,
+            'total_annotations': len(boxes),
+            'total_categories': len(self.categories_dict),
+            'annotations_per_image': len(boxes) / max(total_images, 1),
+            'categories': {cat_data['name']: np.sum(cat_ids == cat_id) 
+                          for cat_id, cat_data in self.categories_dict.items()},
+            'bbox_stats': {
+                'width_mean': boxes[:, 2].mean() if len(boxes) > 0 else 0,
+                'height_mean': boxes[:, 3].mean() if len(boxes) > 0 else 0,
+                'width_std': boxes[:, 2].std() if len(boxes) > 0 else 0,
+                'height_std': boxes[:, 3].std() if len(boxes) > 0 else 0,
+            }
+        }
+        
+        if camera:
+            stats['camera'] = camera
+        
+        return stats
+    
+    def export_for_training(self, 
+                           output_path: str = None, 
+                           category_to_shelf: Dict[int, int] = None,
+                           use_y_position: bool = False,
+                           num_shelves: int = 5,
+                           excluded_categories: Optional[List[str]] = None,
+                           camera: Optional[str] = None) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Exporte les données au format prêt pour l'entraînement
+        
+        Args:
+            output_path: Chemin de sauvegarde (optionnel)
+            category_to_shelf: Mapping catégorie -> étagère
+            use_y_position: Si True, génère les labels depuis la position Y
+            num_shelves: Nombre d'étagères (si use_y_position=True)
+            excluded_categories: Liste de noms de catégories à exclure (ex: ['black-list'])
+            camera: Filtre par caméra - 'left', 'right' ou None (toutes)
+        
+        Returns:
+            Tuple (boxes, labels)
+        """
+        boxes, _, _ = self.get_all_boxes_array(
+            excluded_categories=excluded_categories,
+            camera=camera
+        )
+        
+        if use_y_position:
+            labels = self.get_labels_from_y_position(
+                num_shelves, 
+                excluded_categories=excluded_categories,
+                camera=camera
+            )
+        else:
+            labels = self.get_labels_from_categories(
+                category_to_shelf, 
+                excluded_categories=excluded_categories,
+                camera=camera
+            )
+        
+        if camera:
+            print(f"📷 Caméra: {camera}")
+        print(f"   {len(self.get_images_by_camera(camera)) if camera else len(self.images_dict)} images restantes après filtrage")
+        if excluded_categories:
+            print(f"⚠️  Catégories exclues: {', '.join(excluded_categories)}")
+        print(f"   {len(boxes)} annotations restantes après filtrage")
+        
+        if output_path:
+            np.savez(output_path, boxes=boxes, labels=labels)
+            print(f"✓ Données exportées vers {output_path}")
+        
+        return boxes, labels
+
+
+# Exemple d'utilisation
+if __name__ == "__main__":
+    # 1. Charger le fichier COCO
+    coco = COCOReader('annotations.coco.json', debug=True)
+    
+    # 2. Afficher les statistiques générales
+    stats = coco.get_statistics()
+    print("\n📊 Statistiques du dataset complet:")
+    print(f"  Images: {stats['total_images']}")
+    print(f"  Annotations: {stats['total_annotations']}")
+    
+    # 3. Afficher les statistiques par caméra
+    print("\n📊 Statistiques caméra DROITE:")
+    stats_right = coco.get_statistics(camera='right')
+    print(f"  Images: {stats_right['total_images']}")
+    print(f"  Annotations: {stats_right['total_annotations']}")
+    print(f"  Annotations/image: {stats_right['annotations_per_image']:.2f}")
+    
+    print("\n📊 Statistiques caméra GAUCHE:")
+    stats_left = coco.get_statistics(camera='left')
+    print(f"  Images: {stats_left['total_images']}")
+    print(f"  Annotations: {stats_left['total_annotations']}")
+    print(f"  Annotations/image: {stats_left['annotations_per_image']:.2f}")
+    
+    # 4. Exporter uniquement la caméra DROITE
+    print("\n🔄 Export caméra DROITE:")
+    boxes_right, labels_right = coco.export_for_training(
+        output_path='training_data_right.npz',
+        camera='right',
+        use_y_position=True,
+        num_shelves=5
+    )
+    
+    # 5. Exporter uniquement la caméra GAUCHE
+    print("\n🔄 Export caméra GAUCHE:")
+    boxes_left, labels_left = coco.export_for_training(
+        output_path='training_data_left.npz',
+        camera='left',
+        use_y_position=True,
+        num_shelves=5
+    )
+    
+    # 6. Export avec exclusion de catégories
+    print("\n🔄 Export caméra DROITE (avec exclusions):")
+    boxes_right_filtered, labels_right_filtered = coco.export_for_training(
+        output_path='training_data_right_filtered.npz',
+        camera='right',
+        excluded_categories=['black-list', 'test'],
+        use_y_position=True,
+        num_shelves=5
+    )
+    
+    print(f"\n✓ Export terminé!")
+    print(f"  - Caméra droite: {len(boxes_right)} boîtes")
+    print(f"  - Caméra gauche: {len(boxes_left)} boîtes")
+    
+    # 7. Utiliser avec ShelfDetector
+    # from shelf_classifier import ShelfDetector
+    # detector_right = ShelfDetector(num_shelves=5)
+    # detector_right.train(boxes_right, labels_right, epochs=100)
+    # 
+    # detector_left = ShelfDetector(num_shelves=5)
+    # detector_left.train(boxes_left, labels_left, epochs=100)
