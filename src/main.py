@@ -48,10 +48,33 @@ def prepare_training_data_from_coco(coco_path: str,
     boxes_pairs, labels = coco.export_for_training_before_after(csv_path, camera=camera)
     print(f"\n✅ Loaded {len(boxes_pairs)} boxes pairs with {len(labels)} labels")
     
+    # Filter out all-zero labels
+    print(f"\n🔧 Filtering all-zero labels...")
+    filtered_boxes = []
+    filtered_labels = []
+    filtered_count = 0
+    
+    for i in range(len(boxes_pairs)):
+        label = labels[i]
+        label_values = [int(x) for x in label.split('|')]
+        
+        if all(v == 0 for v in label_values):
+            filtered_count += 1
+            continue
+        
+        filtered_boxes.append(boxes_pairs[i])
+        filtered_labels.append(label)
+    
+    print(f"  ✅ Kept {len(filtered_labels)} samples, filtered out {filtered_count} all-zero labels")
+    
+    # Update boxes_pairs and labels with filtered data
+    boxes_pairs = filtered_boxes
+    labels = filtered_labels
+    
     # Show label distribution
     from collections import Counter
     label_counts = Counter(labels)
-    print(f"\n📊 Label Distribution:")
+    print(f"\n📊 Label Distribution (after filtering):")
     for label, count in sorted(label_counts.items(), key=lambda x: x[1], reverse=True):
         percentage = (count / len(labels)) * 100
         print(f"  {label}: {count} ({percentage:.1f}%)")
