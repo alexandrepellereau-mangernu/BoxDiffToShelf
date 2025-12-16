@@ -47,7 +47,14 @@ def prepare_training_data_from_coco(coco_path: str,
     print(f"\n📋 Loading image pairs from CSV: {csv_path}")
     boxes_pairs, labels = coco.export_for_training_before_after(csv_path, camera=camera)
     print(f"\n✅ Loaded {len(boxes_pairs)} boxes pairs with {len(labels)} labels")
-    print(f"  Unique labels: {np.unique(labels)}")
+    
+    # Show label distribution
+    from collections import Counter
+    label_counts = Counter(labels)
+    print(f"\n📊 Label Distribution:")
+    for label, count in sorted(label_counts.items(), key=lambda x: x[1], reverse=True):
+        percentage = (count / len(labels)) * 100
+        print(f"  {label}: {count} ({percentage:.1f}%)")
     
     # Convert to ShelfDetector format
     training_samples = []
@@ -189,7 +196,8 @@ def main():
     
     detector.save(str(model_path))
     print(f"  Model saved to: {model_path}")
-    
+
+    val_samples = np.random.permutation(val_samples)
     # Test predictions
     if len(val_samples) > 0:
         print("\n" + "=" * 60)

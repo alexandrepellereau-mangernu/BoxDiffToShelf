@@ -483,8 +483,8 @@ class COCOReader:
             except (ValueError, KeyError) as e:
                 # Image not found in COCO annotations
                 skipped += 1
-                if self.debug:
-                    print(f"  ⚠️  Skipped pair ({before_name}, {after_name}): {e}")
+                # if self.debug:
+                #     print(f"  ⚠️  Skipped pair ({before_name}, {after_name}): {e}")
                 continue
         
         if self.debug:
